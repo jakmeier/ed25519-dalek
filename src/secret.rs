@@ -325,6 +325,7 @@ impl ExpandedSecretKey {
     /// # fn main() { }
     /// ```
     #[inline]
+    #[allow(unused)]
     pub fn to_bytes(&self) -> [u8; EXPANDED_SECRET_KEY_LENGTH] {
         let mut bytes: [u8; 64] = [0u8; 64];
 
@@ -375,6 +376,7 @@ impl ExpandedSecretKey {
     /// # fn main() { }
     /// ```
     #[inline]
+    #[allow(unused)]
     pub(crate) fn from_bytes(bytes: &[u8]) -> Result<ExpandedSecretKey, SignatureError> {
         if bytes.len() != EXPANDED_SECRET_KEY_LENGTH {
             return Err(InternalError::BytesLengthError {

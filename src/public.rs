@@ -11,6 +11,7 @@
 
 use core::convert::TryFrom;
 use core::fmt::Debug;
+use core::time::Duration;
 
 use curve25519_dalek::constants;
 use curve25519_dalek::digest::generic_array::typenum::U64;
@@ -28,7 +29,7 @@ use serde::de::Error as SerdeError;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 #[cfg(feature = "serde")]
-use serde_bytes::{Bytes as SerdeBytes, ByteBuf as SerdeByteBuf};
+use serde_bytes::{ByteBuf as SerdeByteBuf, Bytes as SerdeBytes};
 
 use crate::constants::*;
 use crate::errors::*;
@@ -131,7 +132,8 @@ impl PublicKey {
             return Err(InternalError::BytesLengthError {
                 name: "PublicKey",
                 length: PUBLIC_KEY_LENGTH,
-            }.into());
+            }
+            .into());
         }
         let mut bits: [u8; 32] = [0u8; 32];
         bits.copy_from_slice(&bytes[..32]);
@@ -195,7 +197,10 @@ impl PublicKey {
         let k: Scalar;
 
         let ctx: &[u8] = context.unwrap_or(b"");
-        debug_assert!(ctx.len() <= 255, "The context must not be longer than 255 octets.");
+        debug_assert!(
+            ctx.len() <= 255,
+            "The context must not be longer than 255 octets."
+        );
 
         let minus_A: EdwardsPoint = -self.1;
 
@@ -284,8 +289,7 @@ impl PublicKey {
         &self,
         message: &[u8],
         signature: &ed25519::Signature,
-    ) -> Result<(), SignatureError>
-    {
+    ) -> Result<(), SignatureError> {
         let signature = InternalSignature::try_from(signature)?;
 
         let mut h: Sha512 = Sha512::new();
@@ -326,12 +330,7 @@ impl Verifier<ed25519::Signature> for PublicKey {
     ///
     /// Returns `Ok(())` if the signature is valid, and `Err` otherwise.
     #[allow(non_snake_case)]
-    fn verify(
-        &self,
-        message: &[u8],
-        signature: &ed25519::Signature
-    ) -> Result<(), SignatureError>
-    {
+    fn verify(&self, message: &[u8], signature: &ed25519::Signature) -> Result<(), SignatureError> {
         let signature = InternalSignature::try_from(signature)?;
 
         let mut h: Sha512 = Sha512::new();
@@ -351,6 +350,78 @@ impl Verifier<ed25519::Signature> for PublicKey {
         } else {
             Err(InternalError::VerifyError.into())
         }
+    }
+}
+
+impl PublicKey {
+    ///
+    #[allow(non_snake_case)]
+    pub fn verify_timed(
+        &self,
+        message: &[u8],
+        signature: &ed25519::Signature,
+    ) -> Result<(Duration, Duration, Duration, Duration), SignatureError> {
+        let signature = InternalSignature::try_from(signature)?;
+
+        let ts = std::time::Instant::now();
+        let mut h: Sha512 = Sha512::new();
+        let R: EdwardsPoint;
+        let k: Scalar;
+        let minus_A: EdwardsPoint = -self.1;
+        let a_duration: Duration;
+        let b_duration: Duration;
+        let table_duration: Duration;
+
+        h.update(signature.R.as_bytes());
+        h.update(self.as_bytes());
+        h.update(&message);
+        let hash_dur = ts.elapsed();
+
+        k = Scalar::from_hash(h);
+        let ts = std::time::Instant::now();
+        (R, table_duration, a_duration, b_duration) =
+            EdwardsPoint::vartime_double_scalar_mul_basepoint_timed(&k, &(minus_A), &signature.s);
+        let mul_dur = ts.elapsed();
+
+        let ts = std::time::Instant::now();
+        let compressed = R.compress();
+        let compress_dur = ts.elapsed();
+        let verbose = false;
+        if verbose {
+            println!(
+                "{hash_dur:#?} + {mul_dur:#?}({a_duration:#?} & {b_duration:#?}) + {compress_dur:#?}"
+            );
+        }
+
+        if compressed == signature.R {
+            Ok((table_duration, a_duration, b_duration, compress_dur))
+        } else {
+            Err(InternalError::VerifyError.into())
+        }
+    }
+    ///
+    #[allow(non_snake_case)]
+    pub fn verify_byz_score(&self, message: &[u8], signature: &ed25519::Signature) -> usize {
+        let signature = InternalSignature::try_from(signature).unwrap();
+
+        let mut h: Sha512 = Sha512::new();
+        let _r: EdwardsPoint;
+        let k: Scalar;
+        let minus_A: EdwardsPoint = -self.1;
+        let score;
+
+        h.update(signature.R.as_bytes());
+        h.update(self.as_bytes());
+        h.update(&message);
+
+        k = Scalar::from_hash(h);
+        (_r, score) = EdwardsPoint::vartime_double_scalar_mul_basepoint_byz_score(
+            &k,
+            &(minus_A),
+            &signature.s,
+        );
+
+        return score;
     }
 }
 
